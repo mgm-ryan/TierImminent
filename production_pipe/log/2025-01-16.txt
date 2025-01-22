@@ -1,0 +1,2 @@
+[2025-01-16 09:18:02.412386] STEP [1] - Tier Credits Earnings has been refreshed, latest:2025-01-15 00:00:52
+[2025-01-16 09:49:18.213405] STEP [2] - Tier Promotions Histories has been refreshed, latest:2025-01-15 01:00:20.52
