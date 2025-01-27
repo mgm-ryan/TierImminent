@@ -8,8 +8,6 @@ from pyspark.sql.types import ArrayType, FloatType
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StructType, StructField, ArrayType, FloatType
 
-print("imported")
-
 def extract_tc(year, spark):
     '''
     Helper function for **TC_trip_formulation**
@@ -59,7 +57,7 @@ def TC_trip_formulation(year, trip, spark):
         F.sum(F.when(F.col("lob_rollup") == "Gaming", F.col("tiercredit")).otherwise(0)).alias("gaming_tc"), \
         F.sum(F.when(F.col("lob_rollup") == "Non-Gaming", F.col("tiercredit")).otherwise(0)).alias("non_gaming_tc")
     )
-    print(aggregate_df.columns, "agg")
+
     demo_aggregate_df = aggregate_df.join(customer_demo, on=['guest_id','tripstart','tripend'], how='inner')
 
     # RCX Tier promotion history
@@ -81,9 +79,8 @@ def TC_trip_formulation(year, trip, spark):
     # Join with the trip level data
     agg_promote = demo_aggregate_df.join(Tier_promote, (aggregate_df["playerid"] == Tier_promote["playerid"]) &
         (F.col('tripstart').between(F.col("prev_date"), F.col("change_assigned"))),
-        "left").select(*demo_aggregate_df, 'tier_before','tier_after','change_assigned','prev_date','mt_reason', 'mt_subreason','mth_reason','mth_subreason').drop(Tier_promote.)
-    
-    print(agg_promote.columns)
+        "left").drop(Tier_promote["playerid"])\
+            .select(*demo_aggregate_df, 'tier_before','tier_after','change_assigned','prev_date','mt_reason', 'mt_subreason','mth_reason','mth_subreason')
 
     agg_promote = agg_promote.withColumn('calendar_year', F.year(F.col('TripStart')))
     agg_promote = agg_promote.dropna(subset = ['age','gender_cd'])
@@ -132,9 +129,10 @@ def TC_trip_formulation_daily_model(year, trip, spark):
     )
 
     # Join with the trip level data
-    agg_promote = demo_aggregate_df.join(Tier_promote, (aggregate_df["playerid"] == Tier_promote["playerid"]) &
+    agg_promote = demo_aggregate_df.join(Tier_promote, (demo_aggregate_df["playerid"] == Tier_promote["playerid"]) &
         (F.col('tripstart').between(F.col("prev_date"), F.col("change_assigned"))),
-        "left").select(*demo_aggregate_df, 'tier_before','tier_after','change_assigned','prev_date','mt_reason', 'mt_subreason','mth_reason','mth_subreason')
+        "left").drop(Tier_promote["playerid"])\
+            .select(*demo_aggregate_df, 'tier_before','tier_after','change_assigned','prev_date','mt_reason', 'mt_subreason','mth_reason','mth_subreason')
     
 
     agg_promote = agg_promote.withColumn('calendar_year', F.year(F.col('TripStart')))
@@ -232,21 +230,23 @@ def success_trained(train, year, rc, la, mgm_reward):
             First one is the dataframe with the positive cases
             second one contains the player ids which have special promotion
     '''
-    sucess_promotion = train.where(train.change_assigned.isNotNull()).withColumn('tc_percentage', train['totaltiercredit'] / train['target_tc'])\
-    .join(rc, train.reason_code == rc.enum_value, how='left').select(*train.columns, F.col('label').alias('first_label'), 'tc_percentage')\
-        .join(rc, train.subreason_code == rc.enum_value, how='left').select(*train.columns, 'first_label',F.col('label').alias('second_label'),'tc_percentage')\
-            .join(rc, train.mth_reason_code == rc.enum_value, how='left').select(*train.columns, 'first_label', 'second_label', F.col('label').alias('third_label'),'tc_percentage')\
-                .join(rc, train.mth_subreason_code == rc.enum_value, how='left').select(*train.columns, 'first_label', 'second_label', 'third_label', F.col('label').alias('fourth_label'),'tc_percentage').select(*train.columns, 'first_label', 'second_label', 'third_label', 'fourth_label','tc_percentage')
+    sucess_promotion = train.where(train.change_assigned.isNotNull())\
+        .join(rc, train.reason_code == rc.enum_value, how='left').select(*train.columns, F.col('label').alias('first_label'))\
+        .join(rc, train.subreason_code == rc.enum_value, how='left').select(*train.columns, 'first_label',F.col('label').alias('second_label'))\
+            .join(rc, train.mth_reason_code == rc.enum_value, how='left').select(*train.columns, 'first_label', 'second_label', F.col('label').alias('third_label'))\
+                .join(rc, train.mth_subreason_code == rc.enum_value, how='left').select(*train.columns, 'first_label', 'second_label', 'third_label', F.col('label').alias('fourth_label')).select(*train.columns, 'first_label', 'second_label', 'third_label', 'fourth_label')
 
     sucess_promotion_natural = sucess_promotion.where(f"(first_label == 'Tier Evaluation' or first_label is null) and (second_label == 'Tier Evaluation' or second_label is null) and (third_label == 'Tier Evaluation' or third_label is null) and (fourth_label == 'Tier Evaluation' or fourth_label is null) and (cast(change_assigned as date) != '{year}-02-01')").join(mgm_reward, on='guest_id', how='left').select(*sucess_promotion.columns, 'mlifeid')
 
     la_set_tier = la.where((F.col('activity_type') == 'Set Tier') & (F.year('created_utc_ts') == year))
 
-    sucess_promotion_final = sucess_promotion_natural.join(la_set_tier, (sucess_promotion_natural.mlifeid == la_set_tier.loyalty_id), how='leftanti').where('tc_percentage > 0.8').select(*sucess_promotion_natural.columns)
+    sucess_promotion_final = sucess_promotion_natural.join(la_set_tier, (sucess_promotion_natural.mlifeid == la_set_tier.loyalty_id), how='leftanti').select(*sucess_promotion_natural.columns)
 
     special_promotion = sucess_promotion.join(sucess_promotion_final, on = 'guest_id', how='leftanti')
 
-    return sucess_promotion_final, special_promotion
+    unsucess_promotion = train.where(train.change_assigned.isNotNull())
+
+    return sucess_promotion_final, special_promotion, unsucess_promotion
 
 def first_trip(TC_trip_2023, hist_combined, hist_special_promotion, special_promotion):
     train = TC_trip_2023.where(TC_trip_2023.row_number == 1).withColumn('target_tc',F.when(F.col('TotalTierCredit')>200000,-1)\
@@ -371,8 +371,12 @@ def get_train_daily(TC_curr, hist_combined, hist_special_promotion, year, TC_tri
             - Each customer has x rows of data, where x is the number of trip days in the year
     """
     # Get natural promotion and sepcial promotion for the current year
-    success_promotion_final, special_promotion = success_trained(train_curr, year, rc, la, mgm_reward)
-    success_promotion_final = success_promotion_final.withColumn('prev_date', F.coalesce(F.lag('change_assigned').over(Window.partitionBy('guest_id').orderBy('change_assigned')), F.lit(f'{year}-01-01'))).select('guest_id', 'prev_date', 'change_assigned')
+    success_promotion_final, special_promotion, unsuccess = success_trained(train_curr, year, rc, la, mgm_reward)
+
+    success_promotion_final = success_promotion_final.withColumn('prev_date', F.coalesce(F.lag('change_assigned').over(Window.partitionBy('guest_id').orderBy('change_assigned')), F.lit(f'{year-1}-12-31'))).select('guest_id', 'prev_date', 'pro_tier', 'tier_after','change_assigned').union(unsuccess.select('guest_id',F.lit(None).alias('prev_date'),F.lit(None).alias('pro_tier'),F.lit(None).alias('tier_after'), F.lit(None).alias('change_assigned')))
+
+    temp = success_promotion_final.groupby('guest_id').agg(F.max('change_assigned').alias('prev_date'), F.max('tier_after').alias('pro_tier'),  F.lit(f'{year}-12-31').alias('change_assigned'))
+    success_promotion_final = success_promotion_final.drop('tier_after').union(temp)
 
     TC_curr = TC_curr.join(mgm_reward, F.col('playerid') == F.col('MLifeID'), how='inner').select(*TC_curr.columns, 'guest_id')
     TC_curr = TC_curr.groupby('guest_id', F.to_date('transactiondate').alias('transactiondate')).agg(F.sum('tiercredit').alias('tiercredit')).withColumn('remaining_days', F.date_diff(F.lit(f'{year}-12-31'), 'transactiondate'))
@@ -400,7 +404,7 @@ def get_train_daily(TC_curr, hist_combined, hist_special_promotion, year, TC_tri
 
     result = result.join(success_promotion_final, 
                          (F.col('train_guest_id') == F.col('guest_id')) & (F.col('transactiondate').between(F.col('prev_date'), F.col('change_assigned'))), 
-                         how='left').withColumn('label', F.when(F.col('change_assigned').isNotNull(), 1).otherwise(0))
+                         how='left').withColumn('trip_tier', F.when(F.col('trip_tier')< F.col('pro_tier'), F.col('pro_tier')).otherwise(F.col('trip_tier')))
     
     # Assigned Target TC based on trip start tier
     result = result.withColumn('target_tc',F.when(F.col('trip_tier') == 1, 20000)\
@@ -436,7 +440,7 @@ def get_train_daily_new(TC_curr, year, TC_trip_curr, train_curr, mgm_reward, rc,
     """
     # Get natural promotion and sepcial promotion for the current year
     success_promotion_final, special_promotion = success_trained(train_curr, year, rc, la, mgm_reward)
-    success_promotion_final = success_promotion_final.withColumn('prev_date', F.coalesce(F.lag('change_assigned').over(Window.partitionBy('guest_id').orderBy('change_assigned')), F.lit(f'{year}-01-01'))).select('guest_id', 'prev_date', 'change_assigned')
+    success_promotion_final = success_promotion_final.withColumn('prev_date', F.coalesce(F.lag('change_assigned').over(Window.partitionBy('guest_id').orderBy('change_assigned')), F.lit(f'{year}-01-01'))).select('guest_id', 'prev_date', 'change_assigned', 'pro_tier' , 'tier_after')
 
     TC_curr = TC_curr.join(mgm_reward, F.col('playerid') == F.col('MLifeID'), how='inner').select(*TC_curr.columns, 'guest_id')
     TC_curr = TC_curr.groupby('guest_id', F.to_date('transactiondate').alias('transactiondate')).agg(F.sum('tiercredit').alias('tiercredit')).withColumn('remaining_days', F.date_diff(F.lit(f'{year}-12-31'), 'transactiondate'))

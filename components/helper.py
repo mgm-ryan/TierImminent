@@ -106,8 +106,8 @@ def create_sequences_and_labels(df, features,sequence_length, padding_value=0.0)
 def train_minmax(df, features):
     assembler = VectorAssembler(inputCols=features, outputCol="features")
     assembled_df = assembler.transform(df)
-
     scaler = MinMaxScaler(inputCol="features", outputCol="scaledFeatures")
+
     scaler_model = scaler.fit(assembled_df)
     scaled_assembled_df = scaler_model.transform(assembled_df)
     #scaler_model.write().overwrite().save(min_max_scalar_path)
