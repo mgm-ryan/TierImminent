@@ -7,19 +7,14 @@ import numpy as np
 from pyspark.sql.types import ArrayType, FloatType
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StructType, StructField, ArrayType, FloatType
-#from components.helper import *
-#from components.data_prep import *
+from components.helper import *
+from components.data_prep import *
 import torch
-#from model.nn import * 
+from model.nn import * 
 import pandas as pd
-#from utils import *
 from datetime import datetime
 
 from databricks.sdk.runtime import *
-
-%run /Workspace/Users/609399@mgmresorts.com/Tier_Imminent/components/helper.py
-%run /Workspace/Users/609399@mgmresorts.com/Tier_Imminent/components/data_prep.py
-%run /Workspace/Users/609399@mgmresorts.com/Tier_Imminent/model/nn.py
 
 def get_return_trip_borgata(mgm_reward):
     cdp_path='/dbfs/mnt/cdpprod/Customer_Profile_Aggregates/'
@@ -247,7 +242,7 @@ def inference_driver():
     # Get yesterday customers
     cus_list = inference_data.where("date(transactiondate) = date_sub(current_date(), 1)").select('train_guest_id')
     cus_df = inference_data.join(cus_list, (inference_data.train_guest_id == cus_list.train_guest_id), how = 'inner').drop(inference_data.train_guest_id)
-    cus_df = temp_df.withColumn('rn', F.row_number().over(Window.partitionBy('train_guest_id').orderBy('remaining_days'))).where('rn <= 6')
+    cus_df = cus_df.withColumn('rn', F.row_number().over(Window.partitionBy('train_guest_id').orderBy('remaining_days'))).where('rn <= 6')
     # #-----------------------------------------------------------
 
     # # new customers
@@ -345,22 +340,21 @@ def prediction_return(df, threshold):
 
     return final_pred
 
-def prediction_new(df, threshold):
     
 
 
-if __name__ == "__main__":
-    # inf = inference_driver()
-    # test = get_test_2024()
+# if __name__ == "__main__":
+#     # inf = inference_driver()
+#     # test = get_test_2024()
 
-    # test.where('train_guest_id = 4739845').display()
-    # inf.where('train_guest_id = 4739845').display()
-    # -------------------------------------------------------
-    # df = inference_driver()
-    # out = prediction(df, 0.35) 
-    # out.to_csv(f'/Workspace/Users/609399@mgmresorts.com/Tier_Imminent/result/{datetime.now().strftime("%Y-%m-%d")}.csv', index=False)
-    # --------------------------------------------------------
-    inference_driver()
+#     # test.where('train_guest_id = 4739845').display()
+#     # inf.where('train_guest_id = 4739845').display()
+#     # -------------------------------------------------------
+#     # df = inference_driver()
+#     # out = prediction(df, 0.35) 
+#     # out.to_csv(f'/Workspace/Users/609399@mgmresorts.com/Tier_Imminent/result/{datetime.now().strftime("%Y-%m-%d")}.csv', index=False)
+#     # --------------------------------------------------------
+#     inference_driver()
 
 
 
