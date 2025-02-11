@@ -49,12 +49,42 @@ tc_combined = tc_combined.groupBy('playerid').agg(
 tc_combined = tc_combined.join(mgm_reward, F.col('playerid') == F.col('MLifeID'), how='inner').select(*tc_combined.columns, 'guest_id')
 
 # Filtering Borgata Dominant Players
-borgata_dominant_players = tc_combined.where(f'{property_dominant_alias} > (total_tc * 0.8)').select('guest_id')
+property_dominant_players = tc_combined.where(f'{property_dominant_alias} > (total_tc * 0.8)').select('guest_id')
 # Filtering Trip Data
-trip = trip_CPA.join(trip_spec, on='guest_id', how='inner').join(borgata_dominant_players, on='guest_id', how='inner')
+trip = trip_CPA.join(trip_spec, on='guest_id', how='inner').join(property_dominant_players, on='guest_id', how='inner')
 
 # COMMAND ----------
 
 path = "data_science_mart.tierimminent_raw."
 table_name = f"{property_name}"+"_trip_return"
+trip.write.format("delta").mode("overwrite").saveAsTable(path+table_name)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # New Customers
+
+# COMMAND ----------
+
+new_trip = trip_2024.join(trip_spec, on = 'guest_id', how = 'leftanti')
+
+tc_2024 = tc_2024.groupBy('playerid').agg(
+    F.sum('tiercredit').alias('total_tc'), 
+    F.sum(F.when(F.col('site_name').contains('Borgata'), F.col('tiercredit')).otherwise(F.lit(0))).alias('borgata_tc')
+)
+tc_2024 = tc_2024.join(mgm_reward, F.col('playerid') == F.col('MLifeID'), how='inner').select(*tc_2024.columns, 'guest_id')
+
+# Filtering Borgata Dominant Players
+property_dominant_players_new = tc_2024.where('borgata_tc > 0.8').select('guest_id')
+trip = new_trip.join(property_dominant_players_new, on='guest_id', how='inner')
+new_trip = new_trip.join(property_dominant_players_new, on='guest_id', how='inner')
+
+# COMMAND ----------
+
+new_trip.select(F.countDistinct('guest_id')).show()
+
+# COMMAND ----------
+
+path = "data_science_mart.tierimminent_raw."
+table_name = f"{property_name}"+"_trip_new"
 trip.write.format("delta").mode("overwrite").saveAsTable(path+table_name)

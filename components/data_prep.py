@@ -375,7 +375,7 @@ def get_train_daily(TC_curr, hist_combined, hist_special_promotion, year, TC_tri
 
     success_promotion_final = success_promotion_final.withColumn('prev_date', F.coalesce(F.lag('change_assigned').over(Window.partitionBy('guest_id').orderBy('change_assigned')), F.lit(f'{year-1}-12-31'))).select('guest_id', 'prev_date', 'pro_tier', 'tier_after','change_assigned').union(unsuccess.select('guest_id',F.lit(None).alias('prev_date'),F.lit(None).alias('pro_tier'),F.lit(None).alias('tier_after'), F.lit(None).alias('change_assigned')))
 
-    temp = success_promotion_final.groupby('guest_id').agg(F.max('change_assigned').alias('prev_date'), F.max('tier_after').alias('pro_tier'),  F.lit(f'{year}-12-31').alias('change_assigned'))
+    temp = success_promotion_final.groupby('guest_id').agg(F.max('change_assigned').alias('prev_date'), F.max('tier_after').alias('pro_tier'),  F.lit(f'{year+1}-01-01').alias('change_assigned'))
     success_promotion_final = success_promotion_final.drop('tier_after').union(temp)
 
     TC_curr = TC_curr.join(mgm_reward, F.col('playerid') == F.col('MLifeID'), how='inner').select(*TC_curr.columns, 'guest_id')
@@ -412,8 +412,16 @@ def get_train_daily(TC_curr, hist_combined, hist_special_promotion, year, TC_tri
                                                 .when(F.col('trip_tier') == 3, 200000).otherwise(-1)).where('target_tc > 0').withColumn('TripLodgingStatus',  F.substring(F.col("TripLodgingStatus"), 2, 2).cast('int'))
     
     # Assigned label based on the tier promotion date
-    result = result.withColumn('label', F.when(F.col('transactiondate') > F.date_add(F.col("change_assigned"), -7), 1).otherwise(0))
-
+    #result = result.withColumn('label', F.when((F.col('transactiondate') > F.date_add(F.col("change_assigned"), -7)) & (F.year('change_assigned') == 2024), 1).otherwise(0))
+    
+    result = result.withColumn(
+        'label',
+        F.when(
+            (F.col('transactiondate') > F.date_add(F.col("change_assigned"), -7)) &
+            (F.year(F.col('change_assigned')) == 2024),
+            1
+        ).otherwise(0)
+    )
     return result
 
 # Get training data for new customers
@@ -439,8 +447,12 @@ def get_train_daily_new(TC_curr, year, TC_trip_curr, train_curr, mgm_reward, rc,
             - Each customer has x rows of data, where x is the number of trip days in the year
     """
     # Get natural promotion and sepcial promotion for the current year
-    success_promotion_final, special_promotion = success_trained(train_curr, year, rc, la, mgm_reward)
-    success_promotion_final = success_promotion_final.withColumn('prev_date', F.coalesce(F.lag('change_assigned').over(Window.partitionBy('guest_id').orderBy('change_assigned')), F.lit(f'{year}-01-01'))).select('guest_id', 'prev_date', 'change_assigned', 'pro_tier' , 'tier_after')
+    success_promotion_final, special_promotion, unsuccess = success_trained(train_curr, year, rc, la, mgm_reward)
+
+    success_promotion_final = success_promotion_final.withColumn('prev_date', F.coalesce(F.lag('change_assigned').over(Window.partitionBy('guest_id').orderBy('change_assigned')), F.lit(f'{year-1}-12-31'))).select('guest_id', 'prev_date', 'pro_tier', 'tier_after','change_assigned').union(unsuccess.select('guest_id',F.lit(None).alias('prev_date'),F.lit(None).alias('pro_tier'),F.lit(None).alias('tier_after'), F.lit(None).alias('change_assigned')))
+
+    temp = success_promotion_final.groupby('guest_id').agg(F.max('change_assigned').alias('prev_date'), F.max('tier_after').alias('pro_tier'),  F.lit(f'{year+1}-01-01').alias('change_assigned'))
+    success_promotion_final = success_promotion_final.drop('tier_after').union(temp)
 
     TC_curr = TC_curr.join(mgm_reward, F.col('playerid') == F.col('MLifeID'), how='inner').select(*TC_curr.columns, 'guest_id')
     TC_curr = TC_curr.groupby('guest_id', F.to_date('transactiondate').alias('transactiondate')).agg(F.sum('tiercredit').alias('tiercredit')).withColumn('remaining_days', F.date_diff(F.lit(f'{year}-12-31'), 'transactiondate'))
@@ -462,10 +474,10 @@ def get_train_daily_new(TC_curr, year, TC_trip_curr, train_curr, mgm_reward, rc,
         F.coalesce('tier_before', F.substring("tier", 2, 2).cast('int')).alias('trip_tier'),
         F.col("trip.TripLodgingStatus")
         ).withColumnRenamed('guest_id', 'train_guest_id')
-
+ 
     result = result.join(success_promotion_final, 
-                         (F.col('train_guest_id') == F.col('guest_id')) & (F.col('transactiondate').between(F.col('prev_date'), F.col('change_assigned'))), 
-                         how='left').withColumn('label', F.when(F.col('change_assigned').isNotNull(), 1).otherwise(0))
+                        (F.col('train_guest_id') == F.col('guest_id')) & (F.col('transactiondate').between(F.col('prev_date'), F.col('change_assigned'))), 
+                        how='left').withColumn('trip_tier', F.when(F.col('trip_tier')< F.col('pro_tier'), F.col('pro_tier')).otherwise(F.col('trip_tier')))
     
     # Assigned Target TC based on trip start tier
     result = result.withColumn('target_tc',F.when(F.col('trip_tier') == 1, 20000)\
@@ -473,8 +485,15 @@ def get_train_daily_new(TC_curr, year, TC_trip_curr, train_curr, mgm_reward, rc,
                                                 .when(F.col('trip_tier') == 3, 200000).otherwise(-1)).where('target_tc > 0').withColumn('TripLodgingStatus',  F.substring(F.col("TripLodgingStatus"), 2, 2).cast('int'))
     
     # Assigned label based on the tier promotion date
-    result = result.withColumn('label', F.when(F.col('transactiondate') > F.date_add(F.col("change_assigned"), -7), 1).otherwise(0))
-
+    result = result.withColumn(
+        'label',
+        F.when(
+            (F.col('transactiondate') > F.date_add(F.col("change_assigned"), -7)) &
+            (F.year(F.col('change_assigned')) == 2024),
+            1
+        ).otherwise(0)
+    )
+    
     return result
     
 

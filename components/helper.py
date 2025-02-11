@@ -10,6 +10,7 @@ from pyspark.ml.feature import MinMaxScaler
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.functions import vector_to_array
+import mlflow
 
 min_max_scalar_path = '/mnt/proddatalake/dev/TierImminent/scalar/min_max_model'
 
@@ -19,13 +20,22 @@ def create_sequences_and_labels(df, features,sequence_length, padding_value=0.0)
     
     df = df.withColumn("features", F.array(*features))
     
-    window = Window.partitionBy('train_guest_id').orderBy('days_num')
-    df = df.withColumn("row_number", row_number().over(window))
-    
+    # grouped_df = df.groupBy('train_guest_id').agg(
+    #     collect_list("features").alias("all_trips"),
+    #     collect_list('label').alias("all_labels")
+    # )
+
     grouped_df = df.groupBy('train_guest_id').agg(
-        collect_list("features").alias("all_trips"),
-        collect_list('label').alias("all_labels")
+        F.sort_array(collect_list(F.struct("days_num", "features")), asc=True).alias("all_trips"),
+        F.sort_array(collect_list(F.struct("days_num", "label")), asc=True).alias("all_labels")
     )
+
+    grouped_df = grouped_df.withColumn(
+        "all_trips", F.expr("transform(all_trips, x -> x.features)")
+    ).withColumn(
+        "all_labels", F.expr("transform(all_labels, x -> x.label)")
+    )
+
     def create_padded_sequences_and_labels(trip_list, label_list, ids):
         if not trip_list:
             return [], [],[],[]
@@ -34,7 +44,7 @@ def create_sequences_and_labels(df, features,sequence_length, padding_value=0.0)
         for i in range(0, len(trip_list), sequence_length):
             sequence = trip_list[i:i + sequence_length]
             label = label_list[i:i + sequence_length]
-            labels.append(float(label[0]))
+            labels.append(float(label[-1]))
             length.append(float(len(sequence)))
             if len(sequence) < sequence_length:
                 sequence += [[padding_value] * num_features] * (sequence_length - len(sequence))
@@ -121,9 +131,7 @@ def train_minmax(df, features):
     return scaler_model, scaled_assembled_df
 
 def apply_minmax(df, features, min_max_scalar_path):
-    from pyspark.ml.feature import MinMaxScalerModel
-
-    loaded_scaler_model = MinMaxScalerModel.load(min_max_scalar_path)
+    loaded_scaler_model = mlflow.spark.load_model(min_max_scalar_path)
     print(f"Scalar Model loaded from path: {min_max_scalar_path}")
     assembler = VectorAssembler(inputCols=features, outputCol="features")
     test_data = assembler.transform(df)

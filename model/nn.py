@@ -9,6 +9,7 @@ import random
 import mlflow
 import mlflow.pytorch
 from datetime import date
+from mlflow.models import infer_signature
 
 model_path = f"/mnt/proddatalake/dev/TierImminent/model/lstm_{date.today().strftime('%Y_%m_%d')}.pth"
 
@@ -27,7 +28,7 @@ class SequenceDataset(Dataset):
 class LSTMClassifier(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers, output_dim=1, dropout=0.2):
         super(LSTMClassifier, self).__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True, dropout=dropout)
+        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True)
         self.fc = nn.Linear(hidden_dim, output_dim)
         #self.sigmoid = nn.Sigmoid()
 
@@ -51,14 +52,7 @@ class RNNClassifier(nn.Module):
         out = self.fc(hidden[-1])
         return self.sigmoid(out)
 
-def train_lstm(sequences, labels, lengths, ids, input_dim, hidden_dim, num_layers, batch_size, learning_rate, num_epochs, balance, model_path, logging=False):
-    if logging:
-        mlflow.log_param("input_size", input_dim)
-        mlflow.log_param("hidden_size", hidden_dim)
-        mlflow.log_param("learning_rate", learning_rate)
-        mlflow.log_param("epochs", num_epochs)
-        mlflow.log_param("batch_size", batch_size)
-
+def train_lstm(sequences, labels, lengths, ids, input_dim, hidden_dim, num_layers, batch_size, learning_rate, num_epochs, balance, logging=False):
     dataset = SequenceDataset(sequences, labels, lengths)
 
     # train_size = int(0.8 * len(dataset))
@@ -106,12 +100,22 @@ def train_lstm(sequences, labels, lengths, ids, input_dim, hidden_dim, num_layer
             epoch_loss += loss.item()
         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss / len(train_loader):.4f}")
 
-    torch.save(model, model_path)
-
-    if logging:
-        mlflow.pytorch.log_model(model, f"lstm_pytorch_model_{date.today().strftime('%Y-%m-%d')}")
+    #torch.save(model, model_path)
 
     model.eval()
+    if logging:
+        mlflow.set_experiment(experiment_id="3025905521129250")
+        with mlflow.start_run() as run:
+            mlflow.log_param("input_size", input_dim)
+            mlflow.log_param("hidden_size", hidden_dim)
+            mlflow.log_param("learning_rate", learning_rate)
+            mlflow.log_param("epochs", num_epochs)
+            mlflow.log_param("batch_size", batch_size)
+
+            signature = infer_signature(sequences, labels)
+            mlflow.pytorch.log_model(model, f"lstm_pytorch_model_{date.today().strftime('%Y-%m-%d')}", signature=signature)
+            run_id = run.info.run_id
+
     all_labels = []
     all_preds = []
 
@@ -138,13 +142,12 @@ def train_lstm(sequences, labels, lengths, ids, input_dim, hidden_dim, num_layer
     auc_train = roc_auc_score(train_labels, train_preds)
     print(f"train AUC: {auc_train:.4f}")
 
-    if logging:
-        mlflow.log_metric("test_auc", auc_test)
-        mlflow.log_metric("train_auc", auc_train)
+    # if logging:
+    #     mlflow.log_metric("test_auc", auc_test)
+    #     mlflow.log_metric("train_auc", auc_train)
 
-    return
-    # fpr, tpr, thresholds = roc_curve(all_labels, all_preds)
-    # auc_score = roc_auc_score(all_labels, all_preds)
+    # fpr, tpr, thresholds = roc_curve(train_labels, train_preds)
+    # auc_score = roc_auc_score(train_labels, train_preds)
     # plt.figure()
     # plt.plot(fpr, tpr, label=f"ROC Curve (AUC = {auc_score:.2f})")
     # plt.plot([0, 1], [0, 1], 'k--', label="Random Guess")
@@ -153,7 +156,12 @@ def train_lstm(sequences, labels, lengths, ids, input_dim, hidden_dim, num_layer
     # plt.title("ROC Curve")
     # plt.legend(loc="best")
     # plt.grid()
+    # for i in range(0, len(thresholds), len(thresholds)//20):
+    #     plt.text(fpr[i], tpr[i], f'{thresholds[i]:.2f}', fontsize=8, color='red')
     # plt.show()
+    # plt.close() 
+
+    return train_labels, train_preds, all_labels, all_preds, run_id
 
 def train_rnn(sequences, labels, lengths):
     input_dim = 18
